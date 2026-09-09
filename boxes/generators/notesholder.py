@@ -40,6 +40,7 @@ class USlotEdge(Edge):
     def startWidth(self):
         return self.edges[self.e].startWidth()
 
+
 class HalfStackableEdge(edges.StackableEdge):
 
     char = 'H'
@@ -62,6 +63,49 @@ class HalfStackableEdge(edges.StackableEdge):
     def endWidth(self) -> float:
         return self.settings.holedistance + self.settings.thickness
 
+
+class HalfStackableEdgeTop(edges.StackableEdgeTop):
+    """Half of a stackable top edge.
+
+    Draws a single stackable recess exactly above the foot of
+    :class:`HalfStackableEdge` on the same side of the wall, so the feet of
+    the next tray fit in.
+
+    This is the second half of ``StackableBaseEdge.__call__``: a flat run
+    (the raised middle), a recess descending to the shelf, and the closing
+    shelf.  Since the top edge of a ``rectangularWall`` is drawn in the
+    opposite direction to the bottom edge, the recess lands on the same
+    horizontal position as the bottom half foot.
+
+    The matching :class:`HalfStackableEdge` is asymmetric: its foot raises
+    the opening side by one stackable height, so the adjacent straight edge
+    is one height shorter than the outer edge.  To keep the recess level
+    with the full ``StackableEdgeTop`` of the neighbouring walls, this edge
+    declares that extra height as its ``startWidth`` (which the corner then
+    adds to the short opening edge).
+    """
+
+    def startWidth(self) -> float:
+        return self.settings.height
+
+    def endWidth(self) -> float:
+        # The outer end sits on the shelf, level with the full top edge, so
+        # no extra width is needed on that side (the startWidth already
+        # covers the short opening side).
+        return 0.0
+
+    def __call__(self, length, **kw):
+        s = self.settings
+        r = s.height / 2.0 / (1 - math.cos(math.radians(s.angle)))
+        l = r * math.sin(math.radians(s.angle))
+        p = 1 if self.bottom else -1
+
+        self.boxes.edge(length - 1 * s.width - 2 * l)
+        self.boxes.corner(-p * s.angle, r)
+        self.boxes.corner(p * s.angle, r)
+        self.boxes.edge(s.width, tabs=1)
+
+
 class NotesHolder(Boxes):
     """Box for holding a stack of paper, coasters etc"""
 
@@ -82,6 +126,9 @@ the feet."""
             type=ArgparseEdgeType("Fhsfe"), choices=list("Fhsfe"),
             default="s",
             help="edge type for bottom edge")
+        self.argparser.add_argument(
+            "--stackable_top", action="store", type=boolarg, default=False,
+            help="add matching stackable recesses to the top edges")
         self.argparser.add_argument(
             "--opening",  action="store", type=float, default=40,
             help="percent of front (or back) that's open")
@@ -116,22 +163,29 @@ the feet."""
             b2 = b
             b3 = b
 
+        # Matching top edges for the stackable feet of the next NotesHolder
+        top = self.edges["S"] if self.stackable_top else self.edges["e"]
+        if self.stackable_top:
+            t2 = HalfStackableEdgeTop(self, self.edges["S"].settings,
+                                      self.edges["f"].settings)
+        else:
+            t2 = self.edges["e"]
+
         b4 = Edge(self, None)
         b4.startWidth = lambda: b3.startWidth()
 
-
         for side in range(2):
             with self.saved_context():
-                self.rectangularWall(y, h, [b, "F", "e", "F"],
+                self.rectangularWall(y, h, [b, "F", top, "F"],
                                      ignore_widths=[1, 6], move="right")
                 # front walls
                 if self.opening == 0.0 or (side and not self.back_openings):
-                    self.rectangularWall(x, h, [b, "f", "e", "f"],
+                    self.rectangularWall(x, h, [b, "f", top, "f"],
                                          callback=[self.fingerHoleCB(sx, h)],
                                          ignore_widths=[1, 6], move="right")
                 else:
                     self.rectangularWall(sx[0] * (1-o/100) / 2, h,
-                                         [b2, "e", "e", "f"],
+                                         [b2, "e", t2, "f"],
                                          ignore_widths=[1, 6], move="right")
                     for ix in range(len(sx)-1):
                         left = sx[ix] * (1-o/100) / 2
@@ -142,15 +196,16 @@ the feet."""
                         self.rectangularWall(
                             left+right+t, h,
                             [bottom_edge, "e", "e", "e"],
-                            callback=[lambda: self.fingerHolesAt(left+t/2, 0, h, 90)],
+                            callback=[lambda: self.fingerHolesAt(
+                                left+t/2, 0, h, 90)],
                             move="right")
 
                     self.rectangularWall(sx[-1] * (1-o/100) / 2, h,
-                                         [b2, "e", "e", "f"],
+                                         [b2, "e", t2, "f"],
                                          ignore_widths=[1, 6],
                                          move="right mirror")
 
-            self.rectangularWall(x, h, [b, "F", "e", "F"],
+            self.rectangularWall(x, h, [b, "F", top, "F"],
                                  ignore_widths=[1, 6], move="up only")
             # hack to have it reversed in second go and then back to normal
             sx = list(reversed(sx))
@@ -158,7 +213,7 @@ the feet."""
         # bottom
         if self.bottom_edge != "e":
             outer_edge = "h" if self.bottom_edge == "f" else "f"
-            font_edge = back_edge = outer_edge
+            front_edge = back_edge = outer_edge
             u_edge = USlotEdge(self, o, outer_edge)
             outer_width = self.edges[outer_edge].startWidth()
             if self.opening > 0.0:
@@ -180,5 +235,5 @@ the feet."""
         # innner walls
         for i in range(len(sx)-1):
             self.rectangularWall(
-                y, h, ("e" if self.bottom_edge=="e" else "f") + "fef",
+                y, h, ("e" if self.bottom_edge == "e" else "f") + "fef",
                 move="right")
