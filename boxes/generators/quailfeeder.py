@@ -10,17 +10,51 @@ import math
 from boxes import *
 
 
-class QuailFeeder(Boxes):
-    """Sloped feeder with a hinged feeding lid and rear wall standoffs.
+class MountTabSegment(edges.BaseEdge):
+    """Straight edge segment with a rectangular tab protruding outwards."""
 
-    The feeder is intended for laser-cut plywood.  The rear wall is higher
-    than the front wall, so the lid slopes down toward the birds.  The lid
+    def __init__(self, boxes, depth, reference_edge) -> None:
+        super().__init__(boxes, None)
+        self.depth = depth
+        self.reference_edge = reference_edge
+
+    def startWidth(self) -> float:
+        return self.reference_edge.startWidth()
+
+    def endWidth(self) -> float:
+        return self.reference_edge.endWidth()
+
+    def margin(self) -> float:
+        return max(self.reference_edge.margin(), self.depth)
+
+    def __call__(self, length, **kw):
+        # Opposite of a slot: step to the outside, run along the edge,
+        # then return to the original edge line.
+        self.corner(-90)
+        self.edge(self.depth)
+        self.corner(90)
+        self.edge(length)
+        self.corner(90)
+        self.edge(self.depth)
+        self.corner(-90)
+
+
+class QuailFeeder(Boxes):
+    """Sloped feeder with a hinged feeding lid and configurable wall mount.
+
+    The feeder is intended for laser-cut plywood. The rear wall is higher
+    than the front wall, so the lid slopes down toward the birds. The lid
     has a configurable row of rounded feeding openings and is attached with
     the standard Boxes.py cabinet hinge.
 
-    The two side panels have two integral rear bumps.  These bumps project
-    past the back wall and can rest against a cage wall, keeping the body of
-    the feeder slightly away from it.
+    Mounting can be done in three ways:
+
+    * wall_tabs: one tab on the front wall and one on the rear wall, both on
+      the selected left/right side. They pass through matching slots in that
+      side panel and can continue into slots in the cage wall.
+    * rear_standoffs: the original pair of rear-facing bumps on both side
+      panels.
+    * none: no extra mounting geometry.
     """
 
     ui_group = "Tray"
@@ -61,8 +95,27 @@ class QuailFeeder(Boxes):
             help="minimum margin around the row of feeding openings in mm")
 
         self.argparser.add_argument(
+            "--mount_style", type=str,
+            choices=("wall_tabs", "rear_standoffs", "none"),
+            default="wall_tabs",
+            help="how the feeder mounts to the cage wall")
+        self.argparser.add_argument(
+            "--mount_side", type=str, choices=("left", "right"),
+            default="right",
+            help="side used by wall_tabs")
+        self.argparser.add_argument(
+            "--mount_tab_depth", type=float, default=12.0,
+            help="how far the front/back mounting tabs protrude in mm")
+        self.argparser.add_argument(
+            "--mount_tab_height", type=float, default=10.0,
+            help="height of each front/back mounting tab in mm")
+        self.argparser.add_argument(
+            "--mount_clearance", type=float, default=0.2,
+            help="extra clearance added to matching side-panel mount slots in mm")
+
+        self.argparser.add_argument(
             "--rear_stop_depth", type=float, default=12.0,
-            help="how far the side-wall standoffs project behind the feeder")
+            help="how far rear_standoffs project behind the feeder")
         self.argparser.add_argument(
             "--rear_stop_height", type=float, default=10.0,
             help="height of each rear standoff bump")
@@ -84,13 +137,27 @@ class QuailFeeder(Boxes):
             raise ValueError("feeding opening dimensions must be positive")
         if self.opening_margin < 0:
             raise ValueError("opening_margin must not be negative")
-        if self.rear_stop_depth < 0:
-            raise ValueError("rear_stop_depth must not be negative")
-        if self.rear_stop_height <= 0:
-            raise ValueError("rear_stop_height must be positive")
-        if self.back_height < 2 * self.rear_stop_height + 6 * t:
-            raise ValueError(
-                "back_height is too small for two rear stops; reduce rear_stop_height")
+
+        if self.mount_style == "wall_tabs":
+            if self.mount_tab_depth <= 0:
+                raise ValueError("mount_tab_depth must be positive")
+            if self.mount_tab_height <= 0:
+                raise ValueError("mount_tab_height must be positive")
+            if self.mount_clearance < 0:
+                raise ValueError("mount_clearance must not be negative")
+            if self.mount_tab_height > self.front_height - 4 * t:
+                raise ValueError(
+                    "mount_tab_height is too large for front_height; leave room "
+                    "for finger joints above and below the tab")
+
+        if self.mount_style == "rear_standoffs":
+            if self.rear_stop_depth < 0:
+                raise ValueError("rear_stop_depth must not be negative")
+            if self.rear_stop_height <= 0:
+                raise ValueError("rear_stop_height must be positive")
+            if self.back_height < 2 * self.rear_stop_height + 6 * t:
+                raise ValueError(
+                    "back_height is too small for two rear stops; reduce rear_stop_height")
 
         usable_width = self.width - 2 * self.opening_margin
         if self.opening_count * self.opening_width > usable_width:
@@ -123,55 +190,105 @@ class QuailFeeder(Boxes):
             x = margin + gap + w / 2.0 + i * (w + gap)
             self.rectangularHole(x, y, w, opening_depth, r=radius)
 
-    def side_wall(self, move=None, label="side"):
-        """Draw one side wall including the two integral rear standoffs.
+    def _tab_split(self, height):
+        tab_height = self.mount_tab_height
+        lower = (height - tab_height) / 2.0
+        upper = height - tab_height - lower
+        return lower, tab_height, upper
 
-        Front, back and bottom panels use finger tabs.  Matching finger-hole
-        rows are cut inside the side panel; keeping the outer side outline
-        straight/custom lets us add the rear standoff bumps without defining
-        a special edge type.
-        """
+    def _mount_edge(self, height):
+        """Finger-jointed vertical edge with a centered outward mount tab."""
+        lower, tab_height, upper = self._tab_split(height)
+        finger = self.edges["f"]
+        tab = MountTabSegment(self, self.mount_tab_depth, finger)
+        return edges.CompoundEdge(
+            self,
+            [finger, tab, finger],
+            [lower, tab_height, upper],
+        )
+
+    def _wall_side_edges(self, height):
+        left = self.edges["f"]
+        right = self.edges["f"]
+        if self.mount_style == "wall_tabs":
+            if self.mount_side == "left":
+                left = self._mount_edge(height)
+            else:
+                right = self._mount_edge(height)
+        return left, right
+
+    def _side_joint_holes(self, x, height, has_mount_tab=False):
+        """Finger holes for a front/back wall, plus one pass-through tab slot."""
+        if not has_mount_tab:
+            self.fingerHolesAt(x, 0, height, 90)
+            return
+
+        lower, tab_height, upper = self._tab_split(height)
+        if lower > 0:
+            self.fingerHolesAt(x, 0, lower, 90)
+        if upper > 0:
+            self.fingerHolesAt(x, lower + tab_height, upper, 90)
+
+        clearance = self.mount_clearance
+        self.rectangularHole(
+            x,
+            lower + tab_height / 2.0,
+            self.thickness + clearance,
+            tab_height + clearance,
+        )
+
+    def side_wall(self, mounting_side=False, move=None, label="side"):
+        """Draw one side wall and the matching front/back joint slots."""
         t = self.thickness
         d = self.depth
         fh = self.front_height
         bh = self.back_height
-        sd = self.rear_stop_depth
-        sh = self.rear_stop_height
 
-        # Leave some uninterrupted material above and below the bumps.
-        edge_clearance = 2 * t
-        low0 = edge_clearance
-        low1 = low0 + sh
-        high1 = bh - edge_clearance
-        high0 = high1 - sh
+        if self.mount_style == "rear_standoffs":
+            sd = self.rear_stop_depth
+            sh = self.rear_stop_height
 
-        points = [
-            (0, 0),
-            (d, 0),
-            (d, low0),
-            (d + sd, low0),
-            (d + sd, low1),
-            (d, low1),
-            (d, high0),
-            (d + sd, high0),
-            (d + sd, high1),
-            (d, high1),
-            (d, bh),
-            (0, fh),
-        ]
+            edge_clearance = 2 * t
+            low0 = edge_clearance
+            low1 = low0 + sh
+            high1 = bh - edge_clearance
+            high0 = high1 - sh
 
-        tw = d + sd
+            points = [
+                (0, 0),
+                (d, 0),
+                (d, low0),
+                (d + sd, low0),
+                (d + sd, low1),
+                (d, low1),
+                (d, high0),
+                (d + sd, high0),
+                (d + sd, high1),
+                (d, high1),
+                (d, bh),
+                (0, fh),
+            ]
+            tw = d + sd
+        else:
+            points = [
+                (0, 0),
+                (d, 0),
+                (d, bh),
+                (0, fh),
+            ]
+            tw = d
+
         th = bh
         if self.move(tw, th, move, before=True):
             return
 
         with self.saved_context():
-            # Matching slots for the finger tabs on bottom/front/back panels.
             self.fingerHolesAt(0, 0.5 * t, d, 0)
-            self.fingerHolesAt(0.5 * t, 0, fh, 90)
-            self.fingerHolesAt(d - 0.5 * t, 0, bh, 90)
 
-            # Custom outer contour with two rear-facing bumps.
+            use_mount_slots = self.mount_style == "wall_tabs" and mounting_side
+            self._side_joint_holes(0.5 * t, fh, use_mount_slots)
+            self._side_joint_holes(d - 0.5 * t, bh, use_mount_slots)
+
             self.drawPoints(points, close=True)
 
         self.move(tw, th, move, label=label)
@@ -184,23 +301,37 @@ class QuailFeeder(Boxes):
         fh = self.front_height
         bh = self.back_height
 
-        # Bottom: tabs on every edge.  Front/back walls mate with the front
-        # and rear tabs; the two side walls contain matching finger-hole rows.
         self.rectangularWall(w, d, "ffff", move="up", label="bottom")
 
-        # Front wall: finger-jointed to bottom and side-wall slots.
-        self.rectangularWall(w, fh, "Ffef", move="up", label="front")
+        front_left, front_right = self._wall_side_edges(fh)
+        self.rectangularWall(
+            w,
+            fh,
+            ["F", front_right, "e", front_left],
+            move="up",
+            label="front",
+        )
 
-        # Rear wall: same construction, with a cabinet hinge along its top.
-        self.rectangularWall(w, bh, "Ffuf", move="up", label="back")
+        back_left, back_right = self._wall_side_edges(bh)
+        self.rectangularWall(
+            w,
+            bh,
+            ["F", back_right, "u", back_left],
+            move="up",
+            label="back",
+        )
 
-        # Two identical side panels.  Rear bumps are integral to each panel.
-        self.side_wall(move="right", label="side left")
-        self.side_wall(move="right", label="side right")
+        self.side_wall(
+            mounting_side=(self.mount_side == "left"),
+            move="right",
+            label="side left",
+        )
+        self.side_wall(
+            mounting_side=(self.mount_side == "right"),
+            move="right",
+            label="side right",
+        )
 
-        # Sloped lid.  U is the matching half of the cabinet hinge used by
-        # the rear wall's u edge.  The other lid edges remain straight so it
-        # can simply rest on the sloped side-wall edges and front wall.
         self.rectangularWall(
             w,
             self.lid_depth,
@@ -210,5 +341,4 @@ class QuailFeeder(Boxes):
             label="feeding lid",
         )
 
-        # Cabinet hinges require their separate eye/pin pieces as well.
         self.edges["u"].parts(move="up")
