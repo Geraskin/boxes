@@ -103,11 +103,8 @@ class QuailFeeder(Boxes):
         """Length of the sloped lid from the back hinge to the front wall."""
         return math.hypot(self.depth, self.back_height - self.front_height)
 
-    def lid_openings(self, nr):
+    def lid_openings(self):
         """Callback that cuts the feeding openings into the lid."""
-        if nr != 0:
-            return
-
         n = self.opening_count
         w = self.opening_width
         margin = self.opening_margin
