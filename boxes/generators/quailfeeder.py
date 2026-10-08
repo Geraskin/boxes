@@ -44,8 +44,10 @@ class QuailFeeder(Boxes):
 
     The feeder is intended for laser-cut plywood. The rear wall is higher
     than the front wall, so the lid slopes down toward the birds. The lid
-    has a configurable row of rounded feeding openings and is attached with
-    the standard Boxes.py cabinet hinge.
+    has a configurable row of rounded feeding openings. It is either
+    attached with the standard Boxes.py cabinet hinge (which needs pieces of
+    wire or nails as hinge axles) or cut as a drop-in lid that rests between
+    two stops on the side panels and is simply lifted off for feeding.
 
     Mounting can be done in three ways:
 
@@ -120,6 +122,20 @@ class QuailFeeder(Boxes):
             "--rear_stop_height", type=float, default=10.0,
             help="height of each rear standoff bump")
 
+        self.argparser.add_argument(
+            "--lid_type", type=str, choices=("hinged", "removable"),
+            default="hinged",
+            help="how the feeding lid is held: cabinet hinge or drop-in lid")
+        self.argparser.add_argument(
+            "--lid_stop", type=float, default=10.0,
+            help="length of the side stops holding a removable lid in mm")
+        self.argparser.add_argument(
+            "--lid_play", type=float, default=0.3,
+            help="clearance of a removable lid between the stops in mm")
+        self.argparser.add_argument(
+            "--lid_grip", type=float, default=30.0,
+            help="width of the finger notch in a removable lid in mm (0 disables it)")
+
     def _validate(self):
         t = self.thickness
 
@@ -165,10 +181,33 @@ class QuailFeeder(Boxes):
                 "feeding openings do not fit; reduce opening_count/opening_width "
                 "or opening_margin")
 
+        if self.lid_type == "removable":
+            if self.lid_stop <= 0:
+                raise ValueError("lid_stop must be positive for a removable lid")
+            if self.lid_play < 0:
+                raise ValueError("lid_play must not be negative")
+            if self.lid_grip < 0:
+                raise ValueError("lid_grip must not be negative")
+            if self.lid_length <= 4 * t:
+                raise ValueError(
+                    "lid_stop is too large for the lid; reduce lid_stop or lid_grip")
+
     @property
     def lid_depth(self):
         """Length of the sloped lid from the back hinge to the front wall."""
         return math.hypot(self.depth, self.back_height - self.front_height)
+
+    @property
+    def lid_length(self):
+        """Span of the lid between the side stops (the whole slope if hinged)."""
+        if self.lid_type == "removable":
+            return self.lid_depth - 2 * self.lid_stop - self.lid_play
+        return self.lid_depth
+
+    @property
+    def lid_grip_depth(self):
+        """Depth of the finger notch, kept clear of the feeding openings."""
+        return min(0.5 * self.lid_grip, 0.75 * self.opening_margin)
 
     def lid_openings(self):
         """Callback that cuts the feeding openings into the lid."""
@@ -178,17 +217,38 @@ class QuailFeeder(Boxes):
         usable_width = self.width - 2 * margin
         gap = (usable_width - n * w) / (n + 1)
 
-        max_depth = self.lid_depth - 2 * margin
+        max_depth = self.lid_length - 2 * margin
         opening_depth = min(self.opening_depth, max_depth)
         if opening_depth <= 0:
             raise ValueError("opening_margin leaves no room for feeding openings")
 
         radius = min(self.opening_radius, w / 2.0, opening_depth / 2.0)
-        y = self.lid_depth / 2.0
+        y = self.lid_length / 2.0
 
         for i in range(n):
             x = margin + gap + w / 2.0 + i * (w + gap)
             self.rectangularHole(x, y, w, opening_depth, r=radius)
+
+    def lid_grip_notch(self):
+        """Callback cutting a finger notch into the front edge of a removable lid."""
+        if self.lid_grip <= 0:
+            return
+        depth = self.lid_grip_depth
+        # the notch opens at the lid's front edge, so its slot reaches a hair
+        # past that edge (0.02mm) while cutting *depth* into the lid
+        height = depth + 0.02
+        self.rectangularHole(
+            self.width / 2.0,
+            self.lid_length + 0.02 - height / 2.0,
+            self.lid_grip,
+            height,
+            r=min(3.0, depth / 2.0),
+        )
+
+    def lid_cuts(self):
+        """Callback for a removable lid: feeding openings plus finger notch."""
+        self.lid_openings()
+        self.lid_grip_notch()
 
     def _tab_split(self, height):
         tab_height = self.mount_tab_height
@@ -253,6 +313,36 @@ class QuailFeeder(Boxes):
                                  settings.finger + settings.play,
                                  settings.width + settings.play)
 
+    def _lid_stop_points(self):
+        """Outline points replacing the sloped top edge when the lid is removable.
+
+        Both ends of the slope get a stop one material thickness high. The lid
+        drops in between them and its end faces rest flat against the stops'
+        inner faces, which are perpendicular to the lid plane.
+        """
+        t = self.thickness
+        d, fh, bh = self.depth, self.front_height, self.back_height
+        slope = self.lid_depth
+        s = self.lid_stop
+
+        # outward normal of the lid plane, pointing away from the panel
+        nx, ny = -(bh - fh) / slope, d / slope
+        ax, ay, bx, by = d, bh, 0.0, fh
+        ux, uy = (bx - ax) / slope, (by - ay) / slope
+
+        rear = (ax + ux * s, ay + uy * s)
+        front = (bx - ux * s, by - uy * s)
+        return [
+            (ax, ay),
+            (ax, ay + t),
+            (rear[0] + nx * t, rear[1] + ny * t),
+            rear,
+            front,
+            (front[0] + nx * t, front[1] + ny * t),
+            (bx, by + t),
+            (bx, by),
+        ]
+
     def side_wall(self, mounting_side=False, move=None, label="side"):
         """Draw one side wall and the matching front/back joint slots."""
         t = self.thickness
@@ -294,7 +384,11 @@ class QuailFeeder(Boxes):
             ]
             tw = d
 
-        th = bh
+        if self.lid_type == "removable":
+            # the stops sit above the sloped top edge and keep the lid in place
+            points = points[:-2] + self._lid_stop_points()
+
+        th = bh + (t if self.lid_type == "removable" else 0.0)
         if self.move(tw, th, move, before=True):
             return
 
@@ -319,6 +413,7 @@ class QuailFeeder(Boxes):
         fh = self.front_height
         bh = self.back_height
         t = self.thickness
+        rear_edge = "u" if self.lid_type == "hinged" else "e"
 
         # The front and back walls are sandwiched between the side panels and
         # take up one material thickness each, so the bottom only spans the
@@ -339,7 +434,7 @@ class QuailFeeder(Boxes):
         self.rectangularWall(
             w,
             bh,
-            ["e", back_right, "u", back_left],
+            ["e", back_right, rear_edge, back_left],
             callback=[lambda: self._bottom_notches(w)],
             move="up",
             label="back",
@@ -356,13 +451,15 @@ class QuailFeeder(Boxes):
             label="side right",
         )
 
+        lid_callbacks = [self.lid_openings if self.lid_type == "hinged" else self.lid_cuts]
         self.rectangularWall(
             w,
-            self.lid_depth,
-            "Ueee",
-            callback=[self.lid_openings],
+            self.lid_length,
+            ("U" if self.lid_type == "hinged" else "e") + "eee",
+            callback=lid_callbacks,
             move="up",
             label="feeding lid",
         )
 
-        self.edges["u"].parts(move="up")
+        if self.lid_type == "hinged":
+            self.edges["u"].parts(move="up")

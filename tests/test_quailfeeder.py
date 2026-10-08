@@ -60,11 +60,11 @@ def test_quailfeeder_rejects_oversized_mount_tab():
 
 
 _NUM = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)")
-_CMD = re.compile(r"[MmLlHhVvZz]")
+_CMD = re.compile(r"[MmLlHhVvCcSsQqTtAaZz]")
 
 
 def _path_points(d):
-    """Absolute points of a straight line SVG path (M/L/H/V/Z commands)."""
+    """Absolute points of an SVG path (line and curve end points)."""
     points = []
     x = y = 0.0
     for cmd, args in zip(_CMD.findall(d), _CMD.split(d)[1:]):
@@ -79,9 +79,23 @@ def _path_points(d):
         elif cmd in "Vv":
             y = values[-1]
             points.append((x, y))
-        elif cmd in "Ll":
-            x, y = values[-2], values[-1]
-            points.append((x, y))
+        elif cmd in "LlTt":
+            for i in range(0, len(values), 2):
+                x, y = values[i], values[i + 1]
+                points.append((x, y))
+        elif cmd in "Cc":
+            for i in range(0, len(values), 6):
+                x, y = values[i + 4], values[i + 5]
+                points.append((x, y))
+        elif cmd in "SsQq":
+            for i in range(0, len(values), 4):
+                x, y = values[i + 2], values[i + 3]
+                points.append((x, y))
+        elif cmd in "Aa":
+            # only the endpoint of the arc is kept
+            for i in range(0, len(values), 7):
+                x, y = values[i + 5], values[i + 6]
+                points.append((x, y))
     return points
 
 
@@ -179,3 +193,60 @@ def test_quailfeeder_wall_bottom_notches_match_bottom_panel():
         assert fingers <= set(levels)
         # and the notches are one material thickness deep
         assert 2.5 in levels
+
+
+def _render_removable(args):
+    box = QuailFeeder()
+    box.parseArgs(args.split())
+    box.metadata["reproducible"] = True
+    box.open()
+    box.render()
+    return box, box.close().getvalue()
+
+
+def test_quailfeeder_removable_lid_drops_the_hinge():
+    """A removable lid needs no hinge profile and no loose knuckle parts."""
+    _, data = _render_removable("--lid_type=removable")
+    etree.fromstring(data)
+
+    ns = "{http://www.w3.org/2000/svg}"
+    labels = [(text.text or "").strip() for text in etree.fromstring(data).iter(ns + "text")]
+    assert "hinges" not in labels
+    assert "feeding lid" in labels
+
+    # plain top edges, so both walls stay at their nominal height
+    assert _part_bbox(data, "front")[3] == pytest.approx(35.0)
+    assert _part_bbox(data, "back")[3] == pytest.approx(55.0)
+
+
+def test_quailfeeder_removable_lid_sits_between_the_side_stops():
+    """The lid is shortened by both stops and the stops keep it in place."""
+    box, data = _render_removable("--lid_type=removable --lid_stop=10 --lid_play=0.3 --lid_grip=0")
+    thickness = box.thickness
+    slope = box.lid_depth
+
+    _, _, lid_width, lid_length = _part_bbox(data, "feeding lid")
+    assert lid_width == pytest.approx(150.0, abs=0.01)
+    assert lid_length == pytest.approx(slope - 2 * 10.0 - 0.3, abs=0.01)
+
+    # each stop lifts its end of the sloped top edge by one thickness
+    _, _, side_depth, side_height = _part_bbox(data, "side left")
+    assert side_depth == pytest.approx(60.0, abs=0.01)
+    assert side_height == pytest.approx(55.0 + thickness, abs=0.01)
+
+
+def test_quailfeeder_removable_lid_grip_notch():
+    """The finger notch is cut into the removable lid unless disabled."""
+    _, with_notch = _render_removable("--lid_type=removable")
+    _, without_notch = _render_removable("--lid_type=removable --lid_grip=0")
+
+    assert len(_part_points(with_notch, "feeding lid")) > len(
+        _part_points(without_notch, "feeding lid"))
+
+
+def test_quailfeeder_rejects_oversized_lid_stops():
+    box = QuailFeeder()
+    box.parseArgs("--lid_type=removable --lid_stop=40".split())
+    box.open()
+    with pytest.raises(ValueError):
+        box.render()
