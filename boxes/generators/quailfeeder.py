@@ -74,9 +74,9 @@ class QuailFeeder(Boxes):
     than the front wall, so the lid slopes down toward the birds. The lid
     has a configurable row of rounded feeding openings. It is either
     attached with the standard Boxes.py cabinet hinge (which needs pieces of
-    wire or nails as hinge axles) or cut as a drop-in lid: its rear edge
-    rests on the back wall's top edge and a wide latch on the front wall's
-    top edge keeps it from sliding down the slope.
+    wire or nails as hinge axles) or cut as a drop-in lid. That one is cut to
+    the outer width, so it rests on the side panels' sloped top edges, and a
+    wide latch on the front wall's top edge keeps it from sliding down.
 
     Mounting can be done in three ways:
 
@@ -253,6 +253,17 @@ class QuailFeeder(Boxes):
         return self.lid_depth
 
     @property
+    def lid_width(self):
+        """Width of the lid: a removable one rests on top of the side panels.
+
+        Sized to the outer width, so it sits on the side panels' sloped top
+        edges instead of dropping in between them.
+        """
+        if self.lid_type == "removable":
+            return self.width + 2 * self.thickness
+        return self.width
+
+    @property
     def lid_notch_depth(self):
         """Depth of the latch notch cut into the front edge of a removable lid.
 
@@ -278,9 +289,11 @@ class QuailFeeder(Boxes):
 
         radius = min(self.opening_radius, w / 2.0, opening_depth / 2.0)
         y = self.lid_length / 2.0
+        # a removable lid is wider than the opening, keep the row centred on it
+        offset = (self.lid_width - self.width) / 2.0
 
         for i in range(n):
-            x = margin + gap + w / 2.0 + i * (w + gap)
+            x = offset + margin + gap + w / 2.0 + i * (w + gap)
             self.rectangularHole(x, y, w, opening_depth, r=radius)
 
     def _tab_split(self, height):
@@ -349,7 +362,7 @@ class QuailFeeder(Boxes):
     def _lid_notch_edge(self):
         """Lid front edge with the notch taking the latch of the front wall."""
         width = self.lid_latch + self.lid_play
-        side = (self.width - width) / 2.0
+        side = (self.lid_width - width) / 2.0
         notch = LidNotchSegment(self, self.lid_notch_depth)
         return edges.CompoundEdge(
             self,
@@ -477,7 +490,7 @@ class QuailFeeder(Boxes):
         else:
             lid_edges = ["e", "e", self._lid_notch_edge(), "e"]
         self.rectangularWall(
-            w,
+            self.lid_width,
             self.lid_length,
             lid_edges,
             callback=[self.lid_openings],
