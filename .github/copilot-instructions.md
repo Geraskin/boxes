@@ -8,7 +8,7 @@ Production is a Docker container on a Synology NAS, built from this repository i
 
 On the NAS: `cd /volume1/docker/boxes && sudo git fetch origin && sudo git checkout master && sudo git pull && sudo docker compose up -d --build`
 
-Full runbook (ZIP path without git, rollback, verification, troubleshooting): `.github/skills/boxes-nas-deploy/SKILL.md`. To make it a global skill for every session, copy that folder to `~/.agents/skills/boxes-nas-deploy/` on the machine (the container mounts that folder read-only).
+Full runbook (ZIP path without git, rollback, verification, troubleshooting): `.github/skills/boxes-nas-deploy/SKILL.md` — a repo-local skill, deliberately kept inside this repository (it is specific to this fork and this NAS, nothing to share globally).
 
 ## Fork conventions
 
