@@ -214,39 +214,46 @@ def test_quailfeeder_removable_lid_drops_the_hinge():
     assert "hinges" not in labels
     assert "feeding lid" in labels
 
-    # plain top edges, so both walls stay at their nominal height
-    assert _part_bbox(data, "front")[3] == pytest.approx(35.0)
-    assert _part_bbox(data, "back")[3] == pytest.approx(55.0)
+    # plain top edges: the back wall keeps its nominal height while the front
+    # wall grows by the latch standing on its top edge
+    assert _part_bbox(data, "back")[3] == pytest.approx(55.0, abs=0.01)
+    assert _part_bbox(data, "front")[3] == pytest.approx(40.0, abs=0.01)
 
 
-def test_quailfeeder_removable_lid_sits_between_the_side_stops():
-    """The lid is shortened by both stops and the stops keep it in place."""
-    box, data = _render_removable("--lid_type=removable --lid_stop=10 --lid_play=0.3 --lid_grip=0")
-    thickness = box.thickness
-    slope = box.lid_depth
+def test_quailfeeder_removable_lid_spans_the_slope():
+    """The lid reaches the back wall's top edge and overhangs the front wall."""
+    box, data = _render_removable("--lid_type=removable")
+    ratio = box.lid_depth / box.depth
 
     _, _, lid_width, lid_length = _part_bbox(data, "feeding lid")
     assert lid_width == pytest.approx(150.0, abs=0.01)
-    assert lid_length == pytest.approx(slope - 2 * 10.0 - 0.3, abs=0.01)
+    assert lid_length == pytest.approx((60.0 - 2.5 + 4.0) * ratio, abs=0.01)
 
-    # each stop lifts its end of the sloped top edge by one thickness
+    # no stops any more: the side panels are back to their nominal size
     _, _, side_depth, side_height = _part_bbox(data, "side left")
     assert side_depth == pytest.approx(60.0, abs=0.01)
-    assert side_height == pytest.approx(55.0 + thickness, abs=0.01)
+    assert side_height == pytest.approx(55.0, abs=0.01)
 
 
-def test_quailfeeder_removable_lid_grip_notch():
-    """The finger notch is cut into the removable lid unless disabled."""
-    _, with_notch = _render_removable("--lid_type=removable")
-    _, without_notch = _render_removable("--lid_type=removable --lid_grip=0")
+def test_quailfeeder_removable_lid_notch_matches_the_latch():
+    """The notch in the lid's front edge takes the latch tab."""
+    box, data = _render_removable("--lid_type=removable --lid_latch=60")
+    min_x, min_y, _, _ = _part_bbox(data, "feeding lid")
+    # the lid's own frame: x from its left edge, y from its rear edge
+    points = [(x - min_x, box.lid_length - (y - min_y))
+              for x, y in _part_points(data, "feeding lid")]
 
-    assert len(_part_points(with_notch, "feeding lid")) > len(
-        _part_points(without_notch, "feeding lid"))
+    inner = [point for point in points
+             if abs(point[1] - (box.lid_length - box.lid_notch_depth)) < 0.1]
+    assert inner, "the latch notch is missing from the lid"
+    xs = [point[0] for point in inner]
+    assert max(xs) - min(xs) == pytest.approx(60.0 + 0.4, abs=0.02)
+    assert (min(xs) + max(xs)) / 2.0 == pytest.approx(75.0, abs=0.02)
 
 
-def test_quailfeeder_rejects_oversized_lid_stops():
+def test_quailfeeder_rejects_oversized_lid_latch():
     box = QuailFeeder()
-    box.parseArgs("--lid_type=removable --lid_stop=40".split())
+    box.parseArgs("--lid_type=removable --lid_latch=400".split())
     box.open()
     with pytest.raises(ValueError):
         box.render()
