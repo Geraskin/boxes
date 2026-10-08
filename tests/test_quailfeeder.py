@@ -85,19 +85,46 @@ def _path_points(d):
     return points
 
 
-def _part_bbox(data, label):
-    """Bounding box of the part whose label text contains *label*."""
+def _part_points(data, label):
+    """All path points of the part whose label text contains *label*."""
     ns = "{http://www.w3.org/2000/svg}"
     root = etree.fromstring(data)
     for group in root.findall(ns + "g"):
         if not any(label in (text.text or "") for text in group.findall(ns + "text")):
             continue
-        points = [point for path in group.findall(ns + "path")
-                  for point in _path_points(path.get("d"))]
-        xs = [point[0] for point in points]
-        ys = [point[1] for point in points]
-        return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        return [point for path in group.findall(ns + "path")
+                for point in _path_points(path.get("d"))]
     raise AssertionError(f"part labelled {label!r} not found")
+
+
+def _part_bbox(data, label):
+    """Bounding box of the part whose label text contains *label*."""
+    points = _part_points(data, label)
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
+def _edge_levels(data, label, along, offset):
+    """Levels of joints along one edge of a part.
+
+    ``along="y"`` collects the heights above the part's lowest point at
+    ``x = min_x + offset``; ``along="x"`` collects the distances from the
+    part's left edge at ``y = max_y - offset``.  Comparing two parts this
+    way shows whether their joint patterns line up.
+    """
+    points = _part_points(data, label)
+    min_x = min(point[0] for point in points)
+    max_y = max(point[1] for point in points)
+    if along == "y":
+        fixed = min_x + offset
+        values = [max_y - point[1] for point in points
+                  if abs(point[0] - fixed) < 0.01]
+    else:
+        fixed = max_y - offset
+        values = [point[0] - min_x for point in points
+                  if abs(point[1] - fixed) < 0.01]
+    return sorted({round(value, 2) for value in values})
 
 
 def test_quailfeeder_bottom_does_not_overhang():
@@ -118,3 +145,37 @@ def test_quailfeeder_bottom_does_not_overhang():
 
     _, _, side_depth, _ = _part_bbox(data, "side left")
     assert side_depth == pytest.approx(box.depth)
+
+
+def test_quailfeeder_wall_side_joints_match_side_panels():
+    """The walls must be their nominal height with matching side joints.
+
+    Using the "F" edge for their bottom edge reserved one material
+    thickness, which made the walls that much taller and shifted their
+    vertical joints, so they could not seat onto the side panels.
+    """
+    data = render_box("--FingerJoint_style=rectangular")
+    thickness = 2.5
+
+    panel = _edge_levels(data, "side left", "y", 0.0)
+    front = _edge_levels(data, "front", "y", thickness)
+    assert front == panel
+    assert front[0] == pytest.approx(0.0)
+    assert front[-1] == pytest.approx(35.0)
+
+    back = _edge_levels(data, "back", "y", thickness)
+    assert back[0] == pytest.approx(0.0)
+    assert back[-1] == pytest.approx(55.0)
+
+
+def test_quailfeeder_wall_bottom_notches_match_bottom_panel():
+    """The notches cut into the walls' bottom edge must take the bottom's fingers."""
+    data = render_box("--FingerJoint_style=rectangular")
+    fingers = set(_edge_levels(data, "bottom", "x", 0.0))
+    assert fingers
+    for wall in ("front", "back"):
+        levels = _edge_levels(data, wall, "x", 0.0)
+        # the walls also carry their own side joints on that line
+        assert fingers <= set(levels)
+        # and the notches are one material thickness deep
+        assert 2.5 in levels

@@ -237,6 +237,22 @@ class QuailFeeder(Boxes):
             tab_height + clearance,
         )
 
+    def _bottom_notches(self, width):
+        """Cut the notches taking the bottom panel's front/back fingers.
+
+        Drawn explicitly instead of using the "F" edge: that edge reserves
+        one material thickness, which made the walls one thickness taller
+        than front_height/back_height and shifted their side joints.
+        """
+        settings = self.edges["f"].settings
+        fingers, leftover = self.edges["f"].calcFingers(width, None)
+        t = self.thickness
+        for i in range(fingers):
+            pos = leftover / 2.0 + i * (settings.space + settings.finger)
+            self.rectangularHole(pos + 0.5 * settings.finger, 0.5 * t,
+                                 settings.finger + settings.play,
+                                 settings.width + settings.play)
+
     def side_wall(self, mounting_side=False, move=None, label="side"):
         """Draw one side wall and the matching front/back joint slots."""
         t = self.thickness
@@ -313,7 +329,8 @@ class QuailFeeder(Boxes):
         self.rectangularWall(
             w,
             fh,
-            ["F", front_right, "e", front_left],
+            ["e", front_right, "e", front_left],
+            callback=[lambda: self._bottom_notches(w)],
             move="up",
             label="front",
         )
@@ -322,7 +339,8 @@ class QuailFeeder(Boxes):
         self.rectangularWall(
             w,
             bh,
-            ["F", back_right, "u", back_left],
+            ["e", back_right, "u", back_left],
+            callback=[lambda: self._bottom_notches(w)],
             move="up",
             label="back",
         )
