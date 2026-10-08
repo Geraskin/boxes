@@ -283,7 +283,9 @@ class QuailFeeder(Boxes):
             return
 
         with self.saved_context():
-            self.fingerHolesAt(0, 0.5 * t, d, 0)
+            # The bottom sits between the front and back walls, so its
+            # left/right edges only span the inner depth.
+            self.fingerHolesAt(t, 0.5 * t, d - 2 * t, 0)
 
             use_mount_slots = self.mount_style == "wall_tabs" and mounting_side
             self._side_joint_holes(0.5 * t, fh, use_mount_slots)
@@ -300,8 +302,12 @@ class QuailFeeder(Boxes):
         d = self.depth
         fh = self.front_height
         bh = self.back_height
+        t = self.thickness
 
-        self.rectangularWall(w, d, "ffff", move="up", label="bottom")
+        # The front and back walls are sandwiched between the side panels and
+        # take up one material thickness each, so the bottom only spans the
+        # inner depth. Otherwise its finger joints overhang front and back.
+        self.rectangularWall(w, d - 2 * t, "ffff", move="up", label="bottom")
 
         front_left, front_right = self._wall_side_edges(fh)
         self.rectangularWall(
