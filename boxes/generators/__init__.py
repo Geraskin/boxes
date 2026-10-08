@@ -9,6 +9,30 @@ from typing import Any
 
 import boxes
 
+
+# Local fork defaults.  Generator discovery is imported by both the web UI
+# and the normal generator entry points, so patching Boxes.__init__ here makes
+# every newly-created generator start with the settings used on this laser
+# without changing the upstream library defaults in boxes/__init__.py.
+_LOCAL_DEFAULTS = {
+    "thickness": 2.5,
+    "burn": 0.0,
+    "reference": 0.0,
+}
+
+if not getattr(boxes.Boxes, "_geraskin_defaults_patched", False):
+    _original_boxes_init = boxes.Boxes.__init__
+
+    def _boxes_init_with_local_defaults(self) -> None:
+        _original_boxes_init(self)
+        for action in self.argparser._actions:
+            if action.dest in _LOCAL_DEFAULTS:
+                action.default = _LOCAL_DEFAULTS[action.dest]
+
+    boxes.Boxes.__init__ = _boxes_init_with_local_defaults
+    boxes.Boxes._geraskin_defaults_patched = True
+
+
 ui_groups_by_name = {}  # type: ignore
 
 

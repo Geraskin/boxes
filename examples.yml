@@ -1,6 +1,6 @@
 Boxes:
   - box_type: __ALL__
-    skipGenerators: [ GridfinityTrayLayout, TrayLayout, TrayLayoutFile, TypeTray, Edges ]
+    skipGenerators: [ GridfinityTrayLayout, TrayLayout, TrayLayoutFile, TypeTray, Edges, QuailFeeder ]
     brokenGenerators: [ RoundedTrapezoidBox ]
   - box_type: GridfinityTrayLayout
     args:
