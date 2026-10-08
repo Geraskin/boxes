@@ -194,6 +194,20 @@ def test_quailfeeder_wall_bottom_notches_match_bottom_panel():
         # and the notches are one material thickness deep
         assert 2.5 in levels
 
+    # every notch is cut one material thickness into the wall and open towards
+    # the bottom edge: at a notch corner the edge runs at the bottom line and
+    # at the notch face. (The wall's bottom edge is its lowest point, i.e. the
+    # largest y in the drawing.)
+    for wall in ("front", "back"):
+        wall_points = _part_points(data, wall)
+        min_x = min(point[0] for point in wall_points)
+        max_y = max(point[1] for point in wall_points)
+        corners = sorted({point[0] for point in wall_points
+                          if abs(point[1] - (max_y - 2.5)) < 0.01})
+        assert corners, f"no bottom notches in the {wall} wall"
+        assert _edge_levels(data, wall, "y", corners[0] - min_x) == [0.0, 2.5]
+        assert set(fingers) <= {round(corner - min_x, 2) for corner in corners}
+
 
 def _render_removable(args):
     box = QuailFeeder()
@@ -237,12 +251,20 @@ def test_quailfeeder_removable_lid_spans_the_slope():
 
 
 def test_quailfeeder_removable_lid_notch_matches_the_latch():
-    """The notch in the lid's front edge takes the latch tab."""
+    """The notch has to clear the vertical latch face over the lid's thickness."""
     box, data = _render_removable("--lid_type=removable --lid_latch=60")
+    ratio = box.lid_depth / box.depth
     min_x, min_y, _, _ = _part_bbox(data, "feeding lid")
     # the lid's own frame: x from its left edge, y from its rear edge
     points = [(x - min_x, box.lid_length - (y - min_y))
               for x, y in _part_points(data, "feeding lid")]
+
+    # nominal numbers rather than the property: thickness + front overhang +
+    # play + the projection of the lid's thickness over the latch's vertical
+    # face (t * sin theta, measured along the slope)
+    sin_theta = 20.0 / box.lid_depth
+    expected = (2.5 + 4.0 + 0.4 + 2.5 * sin_theta) * ratio
+    assert box.lid_notch_depth == pytest.approx(expected, abs=0.01)
 
     inner = [point for point in points
              if abs(point[1] - (box.lid_length - box.lid_notch_depth)) < 0.1]

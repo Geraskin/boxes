@@ -225,10 +225,14 @@ class QuailFeeder(Boxes):
             if self.lid_latch + self.lid_play > self.width - 4 * t:
                 raise ValueError(
                     "lid_latch is too wide for the front wall; reduce lid_latch")
+            if self.lid_latch_height < 2 * t:
+                raise ValueError(
+                    "lid_latch_height is too small to catch the lid; use at "
+                    "least twice the material thickness")
             if self.lid_notch_depth + 2 * self.opening_margin >= self.lid_length:
                 raise ValueError(
                     "the latch notch leaves no room for the feeding openings; "
-                    "reduce lid_front_overhang or opening_margin")
+                    "reduce lid_front_overhang, lid_play or opening_margin")
 
     @property
     def lid_depth(self):
@@ -267,11 +271,15 @@ class QuailFeeder(Boxes):
     def lid_notch_depth(self):
         """Depth of the latch notch cut into the front edge of a removable lid.
 
-        The notch reaches from the lid's front edge up to one material
-        thickness behind the front wall's outer face, where the latch's inner
-        face stops the lid from sliding down the slope.
+        The notch has to clear the latch over the lid's whole thickness. Its
+        end face is cut perpendicular to the lid, so it leans away from the
+        latch's vertical face by the lid angle, and that projection
+        (thickness * sin theta) has to be added on top of the material
+        thickness, the front overhang and the play.
         """
-        reach = self.thickness + self.lid_front_overhang + self.lid_play
+        t = self.thickness
+        sin_theta = (self.back_height - self.front_height) / self.lid_depth
+        reach = t + self.lid_front_overhang + self.lid_play + t * sin_theta
         return reach * self.lid_slope_ratio
 
     def lid_openings(self):
@@ -282,13 +290,15 @@ class QuailFeeder(Boxes):
         usable_width = self.width - 2 * margin
         gap = (usable_width - n * w) / (n + 1)
 
-        max_depth = self.lid_length - 2 * margin
+        # a removable lid keeps its front edge free for the latch notch
+        front = self.lid_notch_depth if self.lid_type == "removable" else 0.0
+        max_depth = self.lid_length - front - 2 * margin
         opening_depth = min(self.opening_depth, max_depth)
         if opening_depth <= 0:
             raise ValueError("opening_margin leaves no room for feeding openings")
 
         radius = min(self.opening_radius, w / 2.0, opening_depth / 2.0)
-        y = self.lid_length / 2.0
+        y = front + (self.lid_length - front) / 2.0
         # a removable lid is wider than the opening, keep the row centred on it
         offset = (self.lid_width - self.width) / 2.0
 
